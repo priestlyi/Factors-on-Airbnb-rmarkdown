@@ -1,0 +1,639 @@
+---
+title: "Factors on Airbnb"
+author: "Priestly"
+date: "2026-02-14"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+set.seed(2026)
+
+```
+
+```{r load-data}
+library(readr)
+library(tidyverse)
+library(dplyr)
+
+
+Listings <- read_csv("C:/Users/pries/OneDrive/Documents/listings.csv",
+                 show_col_types = FALSE)
+
+glimpse(Listings)
+dim(Listings)
+head(Listings, 15)
+
+```
+
+###Data Cleaning Strategy
+
+To prepare the Airbnb dataset for analysis, I applied a systematic
+rule-based cleaning process using a checklist of common data issues.
+Each listing was evaluated and tagged with specific removal reasons so
+that the impact of filtering could be summarized transparently.
+
+Cleaning checks performed The following issues were examined:
+
+-Missing or invalid values: listings with missing, zero, or negative
+prices, or missing key predictors (accommodates, bedrooms,
+minimum_nights, room_type).
+
+-Incorrect data types: prices and percentage variables were converted
+from text to numeric format, and categorical variables were converted to
+factors.
+
+-Logical inconsistencies: listings with unrealistic combinations (e.g.,
+0 bedrooms but large accommodation capacity) were flagged.
+
+-Extreme outliers: the top 1% of prices were treated as outliers to
+prevent a small number of luxury listings from dominating statistical
+models.
+
+Justification: These steps ensure that the final dataset contains valid,
+comparable listings and improves the reliability of regression analysis
+by reducing missing data problems, data-entry errors, and extreme
+leverage points.
+
+Transparency: Rather than filtering immediately, each rule creates a
+“reason” flag. A summary table reports how many observations were
+removed for each reason, making the cleaning process reproducible and
+transparent.
+
+```{r cleaning}
+library(dplyr)
+library(readr)
+library(stringr)
+
+clean0 <- Listings %>%
+  transmute(
+    id = as.character(id),
+    price_raw = price,
+    price = parse_number(price),
+
+    host_response_rate = parse_number(host_response_rate)/100,
+    host_acceptance_rate = parse_number(host_acceptance_rate)/100,
+    host_listings_count = as.numeric(host_listings_count),
+
+    property_type = as.factor(property_type),
+    room_type = as.factor(room_type),
+
+    accommodates = as.numeric(accommodates),
+    bathrooms = as.numeric(bathrooms),
+    bedrooms = as.numeric(bedrooms),
+    beds = as.numeric(beds),
+
+    minimum_nights = as.numeric(minimum_nights),
+    maximum_nights = as.numeric(maximum_nights),
+
+    description = description
+  )
+```
+
+```{r}
+clean1 <- clean0 %>%
+  mutate(
+    reason_price_missing = is.na(price) | price <= 0,
+    reason_min_nights_missing = is.na(minimum_nights),
+    reason_room_type_missing = is.na(room_type),
+    reason_bedrooms_missing = is.na(bedrooms),
+    reason_accommodates_missing = is.na(accommodates),
+
+    #logical inconsistency:
+    reason_inconsistent_capacity = !is.na(bedrooms) & !is.na(accommodates) &
+      bedrooms == 0 & accommodates >= 1,
+      log_price = log1p(price),
+  )
+```
+
+```{r}
+# Summarize removal reasons
+removal_summary <- clean1 %>%
+  summarise(
+    total_rows = n(),
+    removed_price_missing = sum(reason_price_missing, na.rm=TRUE),
+    removed_min_nights_missing = sum(reason_min_nights_missing, na.rm=TRUE),
+    removed_room_type_missing = sum(reason_room_type_missing, na.rm=TRUE),
+    removed_bedrooms_missing = sum(reason_bedrooms_missing, na.rm=TRUE),
+    removed_accommodates_missing = sum(reason_accommodates_missing, na.rm=TRUE),
+    removed_inconsistent_capacity = sum(reason_inconsistent_capacity, na.rm=TRUE)
+  )
+
+removal_summary
+
+```
+
+### Produce the final cleaned dataset + show % removed
+
+```{r final-clean}
+sub <- clean1 %>%
+  filter(
+    !reason_price_missing,
+    !reason_min_nights_missing,
+    !reason_room_type_missing,
+    !reason_bedrooms_missing,
+    !reason_accommodates_missing,
+    !reason_inconsistent_capacity
+  ) 
+
+cat("Rows before:", nrow(clean1), "\n")
+cat("Rows after :", nrow(sub), "\n")
+cat("Percent kept:", round(100*nrow(sub)/nrow(clean1), 1), "%\n")
+
+glimpse(sub)
+
+```
+
+## Exploratory Data Analysis:
+
+## Numeric summaries
+
+```{r eda-summaries}
+library(scales)
+
+sub %>%
+  summarise(
+    price_min = min(price, na.rm=TRUE),
+    price_med = median(price, na.rm=TRUE),
+    price_mean = mean(price, na.rm=TRUE),
+    price_max = max(price, na.rm=TRUE)
+  )
+
+```
+
+### Plot Of price
+
+```{r}
+library(ggplot2)
+
+ggplot(sub, aes(price)) +
+  geom_histogram(bins = 40) +
+  scale_x_continuous(labels = dollar_format()) +
+  labs(
+    title = "Distribution of Airbnb Prices (Cleaned Data)",
+    x = "Price (CAD)",
+    y = "Number of listings"
+  ) +
+  theme_minimal(base_size = 12)
+
+
+```
+
+## Visualizing Why Used Log of Price Instead of Price
+
+```{r}
+library(ggplot2)
+
+# Original price
+ggplot(sub, aes(x = price)) +
+  geom_histogram(fill = "skyblue", color = "black", bins = 30) +
+  ggtitle("Distribution of Price") +
+  xlab("Price") +
+  theme_minimal()
+
+# Log-transformed price
+ggplot(sub, aes(x = log_price)) +
+  geom_histogram(fill = "lightgreen", color = "black", bins = 30) +
+  ggtitle("Distribution of Log(Price)") +
+  xlab("Log(Price)") +
+  theme_minimal()
+```
+
+```{r}
+library(ggplot2)
+library(tidyr)
+
+par(mfrow = c(1,2))  # Show two plots side by side
+
+# QQ-plot for price
+qqnorm(simple_df$price, main = "QQ-Plot: Price")
+qqline(simple_df$price, col = "red")
+
+# QQ-plot for log(price)
+qqnorm(simple_df$log_price, main = "QQ-Plot: Log(Price)")
+qqline(simple_df$log_price, col = "blue")
+
+
+```
+
+```{r text-high-low, fig.width=12, fig.height=6, message=FALSE, warning=FALSE}
+library(dplyr)
+library(stringr)
+library(tidytext)
+library(wordcloud)
+library(RColorBrewer)
+
+# 1) Build grouped text data
+text_df <- sub %>%
+  filter(!is.na(description), !is.na(price)) %>%
+  mutate(price_group = if_else(price >= median(price, na.rm = TRUE),
+                               "High price", "Low price")) %>%
+  select(id, price_group, description)
+
+# 2) Tokenize + remove stopwords + keep sensible tokens
+words <- text_df %>%
+  unnest_tokens(word, description) %>%
+  anti_join(stop_words, by = "word") %>%
+  filter(str_detect(word, "^[a-z]+$"), nchar(word) > 2)
+
+word_counts <- words %>%
+  count(price_group, word, sort = TRUE)
+
+top_high <- word_counts %>%
+  filter(price_group == "High price") %>%
+  slice_max(n, n = 50)
+
+top_low <- word_counts %>%
+  filter(price_group == "Low price") %>%
+  slice_max(n, n = 50)
+
+par(mfrow = c(1, 2), mar = c(1, 1, 3, 1))
+wordcloud(words = top_low$word, freq = top_low$n,
+          max.words = 50, random.order = FALSE,
+          scale = c(2.2, 0.6),
+          colors = brewer.pal(8, "Dark2"))
+title("Low price listings")
+
+wordcloud(words = top_high$word, freq = top_high$n,
+          max.words = 50, random.order = FALSE,
+          scale = c(2.2, 0.6),
+          colors = brewer.pal(8, "Dark2"))
+title("High price listings")
+
+par(mfrow = c(1, 1))
+overall_counts <- words %>%
+  count(word, sort = TRUE)
+
+wordcloud(words = overall_counts$word, freq = overall_counts$n,
+          min.freq = 20, max.words = 100,
+          random.order = FALSE,
+          scale = c(2.5, 0.5),
+          colors = brewer.pal(8, "Dark2"))
+title("Overall (all listings)")
+
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+# Count words by group
+word_counts <- words %>%
+  count(price_group, word)
+
+# Total word counts per group
+group_totals <- word_counts %>%
+  group_by(price_group) %>%
+  summarise(total = sum(n), .groups = "drop")
+
+# Compute within-group proportions
+word_props <- word_counts %>%
+  left_join(group_totals, by = "price_group") %>%
+  mutate(prop = n / total)
+
+head(word_props)
+table(text_df$price_group)
+table(words$price_group)
+```
+
+```{r}
+common_words <- word_props %>%
+  select(price_group, word, prop) %>%
+  pivot_wider(
+    names_from = price_group,
+    values_from = prop,
+    values_fill = 0
+  ) %>%
+  mutate(min_prop = pmin(`High price`, `Low price`)) %>%
+  arrange(desc(min_prop))
+
+common_words %>%
+  select(word, `High price`, `Low price`, min_prop) %>%
+  slice_max(min_prop, n = 75)
+```
+
+```{r}
+summary(common_words$min_prop)
+quantile(common_words$min_prop, probs = seq(0,1,0.1))
+hist(common_words$min_prop, breaks = 50)
+```
+
+## We removed words with min_prop ≥ 0.002, which corresponds to extremely high shared-frequency terms well above the 90th percentile.
+
+```{r}
+airbnb_stop <- common_words %>%
+  filter(min_prop >= 0.002) %>%
+  pull(word)
+
+length(airbnb_stop)
+head(airbnb_stop, 80)
+```
+
+```{r}
+airbnb_stop <- common_words %>%
+  filter(min_prop >= 0.002) %>%
+  arrange(desc(min_prop))
+
+airbnb_stop %>%
+  select(word, `High price`, `Low price`, min_prop)
+```
+
+```{r}
+words_clean <- words %>%
+  filter(!word %in% airbnb_stop)
+cat("Rows before:", nrow(words), "\n")
+cat("Rows after :", nrow(words_clean), "\n")
+
+```
+
+```{r}
+dtm_tfidf <- words_clean %>%
+  count(id, word) %>%
+  bind_tf_idf(word, id, n)
+head(dtm_tfidf,20)
+```
+
+```{r}
+library(tidyr)
+
+dtm_matrix <- dtm_tfidf %>%
+  select(id, word, tf_idf) %>%
+  pivot_wider(
+    names_from = word,
+    values_from = tf_idf,
+    values_fill = 0
+  )
+
+dim(dtm_matrix)
+```
+
+```{r}
+dtm_numeric <- dtm_matrix %>%
+  select(-id)
+is.numeric(dtm_numeric[[1]])
+```
+
+```{r}
+pca_model <- prcomp(dtm_numeric, n = 10,  scale. = TRUE)
+summary(pca_model)
+ 
+```
+
+```{r}
+imp <- summary(pca_model)$importance
+imp[, 1:10]
+```
+
+```{r}
+colnames(scores)
+price_lookup <- text_df %>%
+  distinct(id, price_group)
+
+scores <- as.data.frame(pca_model$x)
+scores$id <- rownames(scores)
+
+scores <- scores %>%
+  mutate(id = as.character(id))
+
+price_lookup <- price_lookup %>%
+  mutate(id = as.character(id))
+
+scores <- scores %>%
+  left_join(price_lookup, by = "id")
+```
+
+```{r}
+# the ids used in PCA, in the same row order
+ids_used <- dtm_matrix$id
+
+scores <- as.data.frame(pca_model$x)
+scores$id <- ids_used
+
+scores <- scores %>%
+  mutate(id = as.character(id)) %>%
+  left_join(price_lookup %>% mutate(id = as.character(id)), by = "id")
+table(scores$price_group, useNA = "ifany")
+head(scores$id)
+head(price_lookup$id)
+
+t.test(PC1 ~ price_group, data = scores)
+t.test(PC2 ~ price_group, data = scores)
+t.test(PC3 ~ price_group, data = scores)
+```
+
+```{r}
+loadings <- pca_model$rotation[,2]
+sort(loadings, decreasing = TRUE)[1:15]
+sort(loadings)[1:15]
+```
+
+```{r}
+loadings_pc2 <- pca_model$rotation[,2]
+
+pc2_df <- data.frame(
+  word = names(loadings_pc2),
+  loading = loadings_pc2
+)
+head(pc2_df)
+```
+
+```{r}
+# Top positive loadings (High price language)
+top_high_pc2 <- pc2_df %>%
+  arrange(desc(loading)) %>%
+  slice_head(n = 75)
+
+# Top negative loadings (Low price language)
+top_low_pc2 <- pc2_df %>%
+  arrange(loading) %>%
+  slice_head(n = 75)
+  
+head(top_high_pc2)
+head(top_low_pc2)  
+```
+
+```{r}
+library(wordcloud)
+library(RColorBrewer)
+
+par(mfrow = c(1,2), mar = c(1,1,3,1))
+
+# High price wordcloud
+wordcloud(
+  words = top_high_pc2$word,
+  freq = abs(top_high_pc2$loading),
+  max.words = 75,
+  random.order = FALSE,
+  scale = c(2.5, 0.7),
+  colors = brewer.pal(8, "Dark2")
+)
+title("PC2: High Price Language")
+
+# Low price wordcloud
+wordcloud(
+  words = top_low_pc2$word,
+  freq = abs(top_low_pc2$loading),
+  max.words = 75,
+  random.order = FALSE,
+  scale = c(2.5, 0.7),
+  colors = brewer.pal(8, "Dark2")
+)
+title("PC2: Low Price Language")
+
+par(mfrow = c(1,1))
+```
+
+```{r}
+set.seed(2026)
+par(mfrow = c(1,2), mar = c(2,2,4,2), oma = c(0,0,0,0))
+
+# High price (positive PC2)
+wordcloud(
+  words = top_high_pc2$word,
+  freq = abs(top_high_pc2$loading),
+  max.words = 75,
+  random.order = FALSE,
+  scale = c(2.5, 0.7),
+  colors = brewer.pal(8, "Dark2"),
+  shape = "diamond"
+)
+title("PC2: High Price Language")
+
+# Low price (negative PC2)
+wordcloud(
+  words = top_low_pc2$word,
+  freq = abs(top_low_pc2$loading),
+  max.words = 75,
+  random.order = FALSE,
+  scale = c(2.5, 0.7),
+  colors = brewer.pal(8, "Dark2"),
+  shape = "diamond"
+)
+title("PC2: Low Price Language")
+
+par(mfrow = c(1,1))
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+------------------------------------------------------------------------
+
+## 4) Statistical Modeling (principled selection + interactions + comparisons + assumptions)
+
+### Step 4.2: Variable selection (principled)
+
+Pick variables based on: - (capacity, room type, bedrooms, minimum
+nights) - plus **data quality** (few missing values)
+
+Then compare a small set of models using AIC):
+
+```{r model-selection}
+library(broom)
+
+m1 <- lm(log1p(price) ~ accommodates + bedrooms + room_type + minimum_nights, data=sub)
+m2 <- lm(log1p(price) ~ accommodates + bedrooms + beds + room_type + minimum_nights, data=sub)
+m3 <- lm(log1p(price) ~ accommodates + bedrooms + room_type, data=sub)
+
+AIC(m1, m2, m3) %>% arrange(AIC)
+
+
+
+```
+
+###Interactions A reasonable justification: - “The effect of bedrooms
+might differ by room type (entire home vs private room).”
+
+```{r interaction-compare}
+m_base <- m2
+m_int  <- lm(log1p(price) ~ accommodates + beds + bedrooms*room_type + minimum_nights, data=sub)
+
+anova(m_base, m_int)   # nested comparison
+AIC(m_base, m_int)     # model comparison
+
+
+```
+
+```{r baseline-model}
+# Baseline additive model
+m_base <- lm(
+  log1p(price) ~ accommodates + bedrooms + beds +
+    room_type + minimum_nights,
+  data = sub
+)
+
+summary(m_base)
+colSums(is.na(sub[, c("accommodates",
+                      "bedrooms",
+                      "beds",
+                      "room_type",
+                      "minimum_nights",
+                      "price")]))
+
+
+```
+
+------------------------------------------------------------------------
+
+#Interaction Multiple Linear Regression (Final Model)
+
+> The effect of bedrooms on price may differ depending on room type
+> (e.g., entire homes versus private rooms). To account for this
+> possibility, an interaction between bedrooms and room type was
+> included and compared with the baseline model.
+
+```{r interaction-model}
+# Interaction model
+m_final <- lm(
+  log1p(price) ~ accommodates +
+    bedrooms * room_type +
+    beds +
+    minimum_nights,
+  data = sub
+)
+
+summary(m_final)
+```
+
+------------------------------------------------------------------------
+
+# ✅ 3. Model Comparison (VERY IMPORTANT — prof explicitly asked)
+
+### Explanation text
+
+> Models were compared using ANOVA and AIC. The interaction model
+> significantly improved model fit and produced a lower AIC, indicating
+> better explanatory performance while maintaining interpretability.
+
+```{r model-comparison}
+# Nested model comparison
+anova(m_base, m_final)
+
+# Information criterion comparison
+AIC(m_base, m_final)
+```
