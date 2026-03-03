@@ -361,17 +361,74 @@ dtm_tfidf <- words_clean %>%
 head(dtm_tfidf,20)
 ```
 
+
 ```{r}
+dtm_tfidf_grouped <- dtm_tfidf %>%
+  left_join(text_df %>% select(id, price_group), by = "id")
+head(dtm_tfidf_grouped)
+```
+
+```{r}
+avg_tfidf <- dtm_tfidf_grouped %>%
+  group_by(price_group, word) %>%
+  summarise(mean_tfidf = mean(tf_idf), .groups = "drop")
 library(tidyr)
 
-dtm_matrix <- dtm_tfidf %>%
-  select(id, word, tf_idf) %>%
+avg_compare <- avg_tfidf %>%
   pivot_wider(
-    names_from = word,
-    values_from = tf_idf,
+    names_from = price_group,
+    values_from = mean_tfidf,
     values_fill = 0
-  )
+  ) %>%
+  mutate(diff = `High price` - `Low price`)
+top_high <- avg_compare %>%
+  arrange(desc(diff)) %>%
+  slice_head(n = 75)
 
+top_low <- avg_compare %>%
+  arrange(diff) %>%
+  slice_head(n = 75)
+```
+
+```{r}
+set.seed(2026)
+library(wordcloud)
+library(RColorBrewer)
+
+par(mfrow = c(1,2), mar = c(2,2,3,2))
+
+wordcloud(
+  words = top_high$word,
+  freq = abs(top_high$diff),
+  max.words = 75,
+  random.order = FALSE,
+  scale = c(2.5, 0.7),
+  colors = brewer.pal(8, "Dark2")
+)
+title("Words More Associated with High Price")
+
+wordcloud(
+  words = top_low$word,
+  freq = abs(top_low$diff),
+  max.words = 75,
+  random.order = FALSE,
+  scale = c(2.5, 0.7),
+  colors = brewer.pal(8, "Dark2")
+)
+title("Words More Associated with Low Price")
+
+par(mfrow = c(1,1))
+```
+
+
+
+```{r}
+
+library(tidyr)
+dtm_matrix <- dtm_tfidf %>% 
+  select(id, word, tf_idf) %>% 
+  pivot_wider( names_from = word, values_from = tf_idf, values_fill = 0 
+               ) 
 dim(dtm_matrix)
 ```
 
@@ -382,7 +439,15 @@ is.numeric(dtm_numeric[[1]])
 ```
 
 ```{r}
-pca_model <- prcomp(dtm_numeric, n = 10,  scale. = TRUE)
+# fast PCA for large matrices
+if (!requireNamespace("irlba", quietly = TRUE)) install.packages("irlba")
+library(irlba)
+
+pca_model <- prcomp_irlba(as.matrix(dtm_numeric),
+                          n = 10,      # number of PCs
+                          center = TRUE,
+                          scale. = TRUE)
+
 summary(pca_model)
  
 ```
@@ -393,6 +458,10 @@ imp[, 1:10]
 ```
 
 ```{r}
+# make scores from PCA + attach id correctly
+scores <- as.data.frame(pca_model$x)
+scores$id <- as.character(dtm_matrix$id)
+
 colnames(scores)
 price_lookup <- text_df %>%
   distinct(id, price_group)
@@ -436,12 +505,14 @@ sort(loadings)[1:15]
 ```
 
 ```{r}
-loadings_pc2 <- pca_model$rotation[,2]
+# loadings for PC2 (word weights)
+loadings_pc2 <- pca_model$rotation[, 2]
 
-pc2_df <- data.frame(
-  word = names(loadings_pc2),
-  loading = loadings_pc2
+pc2_df <- tibble::tibble(
+  word = colnames(dtm_numeric),
+  loading = as.numeric(loadings_pc2)
 )
+
 head(pc2_df)
 ```
 
