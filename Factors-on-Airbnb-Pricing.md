@@ -1,7 +1,56 @@
-Factors on Airbnb
+Factors on Airbnb Pricing
 ================
 Priestly
-2026-02-14
+
+# Airbnb Price Analysis (Montreal Listings)
+
+## 1) Setup
+
+## 2) Load Data
+
+## Data Cleaning and Feature Preparation
+
+### - Select variables + fix data types
+
+### - Flag data quality issues (removal reasons)
+
+### - Create final cleaned dataset
+
+## Exploratory Data Analysis
+
+### - Summary statistics
+
+### - Price distribution
+
+### - Why log(price) is used
+
+## Text Analysis of Listing Descriptions
+
+### - Create high/low price groups
+
+### - Tokenize and remove stopwords
+
+### - Wordclouds (high vs low)
+
+### - Build Airbnb-specific stopword list
+
+### - TF–IDF and group comparison
+
+## Dimension Reduction on Descriptions (PCA on TF–IDF)
+
+### - Document-term matrix (TF–IDF)
+
+### - PCA (irlba) for large sparse text features
+
+### - PCA interpretation via loadings wordclouds
+
+## Statistical Modeling
+
+### - Candidate models (AIC comparison)
+
+### - Interaction test (ANOVA + AIC)
+
+### - Final model summary
 
 ``` r
 library(readr)
@@ -362,22 +411,6 @@ ggplot(sub, aes(x = log_price)) +
 ![](Factors-on-Airbnb-Pricing_files/figure-gfm/unnamed-chunk-4-2.png)<!-- -->
 
 ``` r
-##library(ggplot2)
-#library(tidyr)
-
-#par(mfrow = c(1,2))  # Show two plots side by side
-
-# QQ-plot for price
-#qqnorm(simple_df$price, main = "QQ-Plot: Price")
-#qqline(simple_df$price, col = "red")
-
-# QQ-plot for log(price)
-#qqnorm(simple_df$log_price, main = "QQ-Plot: Log(Price)")
-#qqline(simple_df$log_price, col = "blue")
-###
-```
-
-``` r
 library(dplyr)
 library(stringr)
 library(tidytext)
@@ -391,7 +424,7 @@ text_df <- sub %>%
                                "High price", "Low price")) %>%
   select(id, price_group, description)
 
-# 2) Tokenize + remove stopwords + keep sensible tokens
+# Tokenize + remove stopwords + keep sensible tokens
 words <- text_df %>%
   unnest_tokens(word, description) %>%
   anti_join(stop_words, by = "word") %>%
@@ -408,6 +441,7 @@ top_low <- word_counts %>%
   filter(price_group == "Low price") %>%
   slice_max(n, n = 50)
 
+# Wordcloud visualization (side-by-side comparison)
 par(mfrow = c(1, 2), mar = c(1, 1, 3, 1))
 wordcloud(words = top_low$word, freq = top_low$n,
           max.words = 50, random.order = FALSE,
@@ -429,6 +463,7 @@ par(mfrow = c(1, 1))
 overall_counts <- words %>%
   count(word, sort = TRUE)
 
+# Overall wordcloud (all listings combined)
 wordcloud(words = overall_counts$word, freq = overall_counts$n,
           min.freq = 20, max.words = 100,
           random.order = FALSE,
@@ -439,9 +474,12 @@ title("Overall (all listings)")
 
 ![](Factors-on-Airbnb-Pricing_files/figure-gfm/text-high-low-2.png)<!-- -->
 
+### Within-Group Word Proportions (Normalize for Group Size)
+
 ``` r
 library(dplyr)
 library(tidyr)
+# Normalize word frequencies within each price group
 
 # Count words by group
 word_counts <- words %>%
@@ -485,6 +523,8 @@ table(words$price_group)
     ## 
     ## High price  Low price 
     ##     129914     117397
+
+### Identifying Highly Shared (Generic) Words Across Price Groups
 
 ``` r
 common_words <- word_props %>%
@@ -537,7 +577,9 @@ quantile(common_words$min_prop, probs = seq(0,1,0.1))
 hist(common_words$min_prop, breaks = 50)
 ```
 
-![](Factors-on-Airbnb-Pricing_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
+![](Factors-on-Airbnb-Pricing_files/figure-gfm/unnamed-chunk-6-1.png)<!-- -->
+
+### Creating an Airbnb-Specific Stopword List
 
 ## We removed words with min_prop ≥ 0.002, which corresponds to extremely high shared-frequency terms well above the 90th percentile.
 
@@ -546,12 +588,14 @@ airbnb_stop <- common_words %>%
   filter(min_prop >= 0.002) %>%
   pull(word)
 
+# Number of words removed
 length(airbnb_stop)
 ```
 
     ## [1] 78
 
 ``` r
+# Inspect first few removed words
 head(airbnb_stop, 80)
 ```
 
@@ -577,6 +621,7 @@ airbnb_stop <- common_words %>%
   filter(min_prop >= 0.002) %>%
   arrange(desc(min_prop))
 
+# Display removed words with their proportions in both groups
 airbnb_stop %>%
   select(word, `High price`, `Low price`, min_prop)
 ```
@@ -599,6 +644,8 @@ airbnb_stop %>%
 ``` r
 words_clean <- words %>%
   filter(!word %in% airbnb_stop)
+
+# Compare token counts before and after filtering
 cat("Rows before:", nrow(words), "\n")
 ```
 
@@ -610,10 +657,15 @@ cat("Rows after :", nrow(words_clean), "\n")
 
     ## Rows after : 247311
 
+### Constructing TF–IDF Text Features
+
 ``` r
+# Compute TF–IDF for each listing
 dtm_tfidf <- words_clean %>%
   count(id, word) %>%
   bind_tf_idf(word, id, n)
+
+# Inspect first few TF–IDF entries
 head(dtm_tfidf,20)
 ```
 
@@ -641,9 +693,13 @@ head(dtm_tfidf,20)
     ## 19 1.005025077628e+18 equipped         1 0.0233  1.55 0.0359
     ## 20 1.005025077628e+18 freezer          1 0.0233  5.54 0.129
 
+### Attach Price Labels to TF–IDF Features
+
 ``` r
 dtm_tfidf_grouped <- dtm_tfidf %>%
   left_join(text_df %>% select(id, price_group), by = "id")
+
+# Inspect the merged dataset
 head(dtm_tfidf_grouped)
 ```
 
@@ -656,6 +712,8 @@ head(dtm_tfidf_grouped)
     ## 4 1.005025077628e+18 bathtub      1 0.0233  4.32 0.101  Low price  
     ## 5 1.005025077628e+18 bed          1 0.0233  1.69 0.0394 Low price  
     ## 6 1.005025077628e+18 bedding      1 0.0233  3.73 0.0867 Low price
+
+### Comparing Average TF–IDF by Price Group
 
 ``` r
 avg_tfidf <- dtm_tfidf_grouped %>%
@@ -670,14 +728,19 @@ avg_compare <- avg_tfidf %>%
     values_fill = 0
   ) %>%
   mutate(diff = `High price` - `Low price`)
+
+# Top words associated with High-price listings
 top_high <- avg_compare %>%
   arrange(desc(diff)) %>%
   slice_head(n = 75)
 
+# Top words associated with Low-price listings
 top_low <- avg_compare %>%
   arrange(diff) %>%
   slice_head(n = 75)
 ```
+
+### Wordclouds of Price-Differentiating Language (TF–IDF Differences)
 
 ``` r
 set.seed(2026)
@@ -707,11 +770,15 @@ wordcloud(
 title("Words More Associated with Low Price")
 ```
 
-![](Factors-on-Airbnb-Pricing_files/figure-gfm/unnamed-chunk-15-1.png)<!-- -->
+![](Factors-on-Airbnb-Pricing_files/figure-gfm/tfidf-wordclouds-1.png)<!-- -->
 
 ``` r
 par(mfrow = c(1,1))
 ```
+
+## Dimension Reduction on Listing Descriptions
+
+### Construct Document–Term Matrix (TF–IDF Weighted)
 
 ``` r
 library(tidyr)
@@ -719,18 +786,26 @@ dtm_matrix <- dtm_tfidf %>%
   select(id, word, tf_idf) %>% 
   pivot_wider( names_from = word, values_from = tf_idf, values_fill = 0 
                ) 
+
+# Inspect matrix dimensions (listings × vocabulary size)
 dim(dtm_matrix)
 ```
 
     ## [1] 7609 6912
 
+### Prepare Numeric Matrix for PCA
+
 ``` r
 dtm_numeric <- dtm_matrix %>%
   select(-id)
+
+#confirm columns are numeric
 is.numeric(dtm_numeric[[1]])
 ```
 
     ## [1] TRUE
+
+### Principal Component Analysis (Truncated SVD via irlba)
 
 ``` r
 # fast PCA for large matrices
@@ -742,6 +817,7 @@ pca_model <- prcomp_irlba(as.matrix(dtm_numeric),
                           center = TRUE,
                           scale. = TRUE)
 
+# Examine proportion of variance explained
 summary(pca_model)
 ```
 
@@ -755,8 +831,12 @@ summary(pca_model)
     ## Proportion of Variance 0.00188 0.00188 0.00185
     ## Cumulative Proportion  0.01843 0.02030 0.02215
 
+### Variance Explained by Principal Components
+
 ``` r
 imp <- summary(pca_model)$importance
+
+# Display first 10 principal components
 imp[, 1:10]
 ```
 
@@ -768,6 +848,8 @@ imp[, 1:10]
     ## Standard deviation     3.665309 3.603819 3.601648 3.573879
     ## Proportion of Variance 0.001940 0.001880 0.001880 0.001850
     ## Cumulative Proportion  0.016550 0.018430 0.020300 0.022150
+
+### Attach PCA Scores to Price Groups
 
 ``` r
 # make scores from PCA + attach id correctly
@@ -790,12 +872,16 @@ scores$id <- rownames(scores)
 scores <- scores %>%
   mutate(id = as.character(id))
 
+# Create lookup table for price group
 price_lookup <- price_lookup %>%
   mutate(id = as.character(id))
 
+# Merge PCA scores with price group
 scores <- scores %>%
   left_join(price_lookup, by = "id")
 ```
+
+### Do PCA Language Components Differ by Price Group? (t-tests)
 
 ``` r
 # the ids used in PCA, in the same row order
@@ -804,6 +890,7 @@ ids_used <- dtm_matrix$id
 scores <- as.data.frame(pca_model$x)
 scores$id <- ids_used
 
+# Attach price group labels
 scores <- scores %>%
   mutate(id = as.character(id)) %>%
   left_join(price_lookup %>% mutate(id = as.character(id)), by = "id")
@@ -828,6 +915,7 @@ head(price_lookup$id)
     ## [1] "29059" "29061" "38118" "50479" "66247" "66276"
 
 ``` r
+# Hypothesis tests: do mean PC scores differ by price group?
 t.test(PC1 ~ price_group, data = scores)
 ```
 
@@ -875,8 +963,12 @@ t.test(PC3 ~ price_group, data = scores)
     ## mean in group High price  mean in group Low price 
     ##               0.03385728              -0.03444072
 
+### Interpreting PC2 via Word Loadings
+
 ``` r
 loadings <- pca_model$rotation[,2]
+
+# Top positive words (largest contributors to positive PC2 direction)
 sort(loadings, decreasing = TRUE)[1:15]
 ```
 
@@ -885,6 +977,7 @@ sort(loadings, decreasing = TRUE)[1:15]
     ## [15] 0.1823281
 
 ``` r
+# Top negative words (largest contributors to negative PC2 direction)
 sort(loadings)[1:15]
 ```
 
@@ -892,8 +985,10 @@ sort(loadings)[1:15]
     ##  [6] -0.007042337 -0.006839209 -0.006824722 -0.006605713 -0.006587714
     ## [11] -0.006416953 -0.006201581 -0.006161451 -0.005971333 -0.005958712
 
+### Create Structured Loading Table for PC2
+
 ``` r
-# loadings for PC2 (word weights)
+# Extract PC2 loadings (word weights)
 loadings_pc2 <- pca_model$rotation[, 2]
 
 pc2_df <- tibble::tibble(
@@ -914,6 +1009,8 @@ head(pc2_df)
     ## 5 bed      -0.00199 
     ## 6 bedding   0.0417
 
+### Identify Words Defining PC2 (Positive vs Negative Directions)
+
 ``` r
 # Top positive loadings (High price language)
 top_high_pc2 <- pc2_df %>%
@@ -925,6 +1022,7 @@ top_low_pc2 <- pc2_df %>%
   arrange(loading) %>%
   slice_head(n = 75)
   
+# Inspect strongest contributors
 head(top_high_pc2)
 ```
 
@@ -951,6 +1049,8 @@ head(top_low_pc2)
     ## 4 heart     -0.00805
     ## 5 located   -0.00766
     ## 6 steps     -0.00704
+
+### Visualizing PC2 Language Structure
 
 ``` r
 library(wordcloud)
@@ -981,42 +1081,7 @@ wordcloud(
 title("PC2: Low Price Language")
 ```
 
-![](Factors-on-Airbnb-Pricing_files/figure-gfm/unnamed-chunk-25-1.png)<!-- -->
-
-``` r
-par(mfrow = c(1,1))
-```
-
-``` r
-set.seed(2026)
-par(mfrow = c(1,2), mar = c(2,2,4,2), oma = c(0,0,0,0))
-
-# High price (positive PC2)
-wordcloud(
-  words = top_high_pc2$word,
-  freq = abs(top_high_pc2$loading),
-  max.words = 75,
-  random.order = FALSE,
-  scale = c(2.5, 0.7),
-  colors = brewer.pal(8, "Dark2"),
-  shape = "diamond"
-)
-title("PC2: High Price Language")
-
-# Low price (negative PC2)
-wordcloud(
-  words = top_low_pc2$word,
-  freq = abs(top_low_pc2$loading),
-  max.words = 75,
-  random.order = FALSE,
-  scale = c(2.5, 0.7),
-  colors = brewer.pal(8, "Dark2"),
-  shape = "diamond"
-)
-title("PC2: Low Price Language")
-```
-
-![](Factors-on-Airbnb-Pricing_files/figure-gfm/unnamed-chunk-26-1.png)<!-- -->
+![](Factors-on-Airbnb-Pricing_files/figure-gfm/pc2-wordclouds-1.png)<!-- -->
 
 ``` r
 par(mfrow = c(1,1))
